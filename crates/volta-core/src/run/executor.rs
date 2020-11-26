@@ -225,6 +225,7 @@ impl PackageInstallCommand {
 
         let mut command = match manager {
             PackageManager::Npm => create_command("npm"),
+            PackageManager::Pnpm => create_command("pnpm"),
             PackageManager::Yarn => create_command("yarn"),
         };
         command.args(args);

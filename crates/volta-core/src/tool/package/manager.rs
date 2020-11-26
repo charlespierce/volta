@@ -5,6 +5,8 @@ use std::process::Command;
 use super::metadata::GlobalYarnManifest;
 use crate::fs::read_dir_eager;
 
+// TODO: Figure out how to handle `pnpm`s _GARBAGE_ directory shenanigans.
+
 /// The package manager used to install a given package
 #[derive(
     Copy, Clone, serde::Serialize, serde::Deserialize, PartialOrd, Ord, PartialEq, Eq, Debug,
@@ -12,6 +14,7 @@ use crate::fs::read_dir_eager;
 pub enum PackageManager {
     Npm,
     Yarn,
+    Pnpm,
 }
 
 impl PackageManager {
@@ -68,8 +71,8 @@ impl PackageManager {
     #[cfg(windows)]
     pub fn binary_dir(self, package_root: PathBuf) -> PathBuf {
         match self {
-            // On Windows, npm leaves the binaries at the root of the `prefix` directory
-            PackageManager::Npm => package_root,
+            // On Windows, npm & pnpm leave the binaries at the root of the `prefix` directory
+            PackageManager::Npm | PackageManager::Pnpm => package_root,
             // On Windows, Yarn still includes the `bin` subdirectory
             PackageManager::Yarn => {
                 let mut path = package_root;
@@ -84,7 +87,7 @@ impl PackageManager {
     pub(super) fn setup_global_command(self, command: &mut Command, package_root: PathBuf) {
         command.env("npm_config_prefix", &package_root);
 
-        if let PackageManager::Yarn = self {
+        if self == PackageManager::Yarn {
             command.env("npm_config_global_folder", self.source_root(package_root));
         }
     }
@@ -95,7 +98,9 @@ impl PackageManager {
     pub(super) fn get_installed_package(self, package_root: PathBuf) -> Option<String> {
         match self {
             PackageManager::Npm => get_npm_package_name(self.source_dir(package_root)),
-            PackageManager::Yarn => get_yarn_package_name(self.source_root(package_root)),
+            PackageManager::Pnpm | PackageManager::Yarn => {
+                get_yarn_pnpm_package_name(self.source_root(package_root))
+            }
         }
     }
 }
@@ -140,10 +145,10 @@ fn get_single_directory_name(parent_dir: &Path) -> Option<String> {
     }
 }
 
-/// Determine the package name for a Yarn global install
+/// Determine the package name for a Yarn or pnpm global install
 ///
-/// Yarn creates a `package.json` file with the globally installed package as a dependency
-fn get_yarn_package_name(source_root: PathBuf) -> Option<String> {
+/// Yarn & pnpm create a `package.json` file with the globally installed package as a dependency
+fn get_yarn_pnpm_package_name(source_root: PathBuf) -> Option<String> {
     let package_file = source_root.join("package.json");
     let file = File::open(package_file).ok()?;
     let manifest: GlobalYarnManifest = serde_json::de::from_reader(file).ok()?;

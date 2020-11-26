@@ -70,6 +70,73 @@ impl<'a> CommandArg<'a> {
         }
     }
 
+    /// Parse the given set of arguments to see if they correspond to a pnpm global command
+    #[cfg(feature = "pnpm")]
+    pub fn for_pnpm<S>(args: &'a [S]) -> Self
+    where
+        S: AsRef<OsStr>,
+    {
+        // If VOLTA_UNSAFE_GLOBAL is set, then we always skip any global parsing
+        if env::var_os(UNSAFE_GLOBAL).is_some() {
+            return CommandArg::NotGlobal;
+        }
+
+        // Due to how pnpm parses command line args, we must pass the installation directory as a
+        // command-line argument using `--dir`. As a result, we should treat any install that
+        // _already_ has `--dir` (or its alias `--prefix`) as _not_ a global, since we know that
+        // won't install correctly.
+        // Additionally, all global installs must have `-g` or `--global` in the argument list
+        let mut found_global = false;
+        let mut found_prefix = false;
+        for arg in args.iter() {
+            if let Some(arg_s) = arg.as_ref().to_str() {
+                if arg_s.starts_with("--dir") || arg_s.starts_with("--prefix") {
+                    found_prefix = true;
+                }
+
+                if arg_s == "-g" || arg_s == "--global" {
+                    found_global = true;
+                }
+            }
+        }
+
+        if !found_global {
+            return CommandArg::NotGlobal;
+        }
+
+        let mut positionals = args.iter().filter(is_positional).map(AsRef::as_ref);
+
+        // The first positional argument will always be the command, however pnpm supports
+        // multiple aliases for each command:
+        //   -   install: `install`, `i`, `add`
+        //   - uninstall: `uninstall`, `un`, `remove`, `rm`
+
+        match positionals.next() {
+            Some(cmd) if cmd == "install" || cmd == "i" || cmd == "add" => {
+                // For installs, as noted above, we should ignore any calls that set the prefix
+                if found_prefix {
+                    return CommandArg::NotGlobal;
+                }
+
+                // The common args for an install should be the command combined with any flags
+                let mut common_args = vec![cmd];
+                common_args.extend(args.iter().filter(is_flag).map(AsRef::as_ref));
+
+                CommandArg::Global(GlobalCommand::Install(InstallArgs {
+                    manager: PackageManager::Pnpm,
+                    common_args,
+                    tools: positionals.collect(),
+                }))
+            }
+            Some(cmd) if cmd == "uninstall" || cmd == "un" || cmd == "remove" || cmd == "rm" => {
+                CommandArg::Global(GlobalCommand::Uninstall(UninstallArgs {
+                    tools: positionals.collect(),
+                }))
+            }
+            _ => CommandArg::NotGlobal,
+        }
+    }
+
     /// Parse the given set of arguments to see if they correspond to a Yarn global command
     pub fn for_yarn<S>(args: &'a [S]) -> Self
     where
